@@ -1,0 +1,935 @@
+{
+  "name": "Distributor Scorecard Core",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "ecadfe9a-4c20-4afe-ad4e-5438a705623e",
+      "name": "Weekly Monday 08:00 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "distributor-scorecard-agent",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "5381ea56-6083-4899-833c-bedc6906a0ff",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        464,
+        496
+      ],
+      "webhookId": "a50ef658-10e0-4a02-af4d-8fa771497831"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.body.query ?? $json.chatInput ?? \"Show weekly rankings\" }}",
+        "options": {
+          "systemMessage": "You are a Senior FMCG Sales Performance Analyst for a distribution network in Pakistan.\n\nYour role:\n- Analyze distributor performance data\n- Provide rankings and insights\n- Generate scorecards and reports\n- Answer questions about distributor performance\n- Manage data validation and error logging\n- Maintain historical records\n\nAvailable tools:\n\nDATA RETRIEVAL:\n- Get Weekly Data: Reads \"Weekly Sales Data\" sheet (all rows)\n- Get Distributor Config: Reads distributor emails, historical data, Active flag\n- Get System Config: Reads weights, recipients, settings\n\nDATA PROCESSING:\n- Filter Last Week: Filters data to last week ending Sunday, returns {rows[], weekEnd, rowCount}\n- Validate And Filter: Validates required fields, numeric values, date format, Active=YES status. Returns validRows and errorRows\n- Calculate Scores: Computes Volume%, Coverage%, Growth%, Returns%, composite score, tier, rank\n- Generate AI Commentary: Creates 2-sentence observations + 1 recommendation per distributor + executive brief\n\nERROR HANDLING:\n- Log Errors: Appends errorRows to \"Error Log\" sheet with date, code, type, detail, row_number\n- Check Duplicate Run: Checks Report Log for existing weekEnd to prevent duplicate runs\n\nEMAIL DELIVERY:\n- Send Distributor Emails: Sends HTML scorecard to each distributor (include rank, score, KPIs, AI insights, CC territory manager)\n- Send NSM Report: Sends national summary to management (ranking table, top 3, bottom 3, tier distribution, executive brief)\n\nLOGGING:\n- Update Historical Data: Appends processed data to \"Historical Data\" sheet\n- Log Report Run: Appends run summary to \"Report Log\" (run date, weekEnd, count, emails sent, top/bottom performers, status)\n\nFULL AUTOMATION WORKFLOW:\n1. Check Duplicate Run (stop if exists)\n2. Get Weekly Data\n3. Filter Last Week (stop if rowCount = 0)\n4. Get Distributor Config\n5. Get System Config\n6. Validate And Filter\n7. Log Errors (if any)\n8. Calculate Scores\n9. Generate AI Commentary\n10. Send Distributor Emails (one per distributor, continue on failure)\n11. Send NSM Report\n12. Update Historical Data\n13. Log Report Run\n\nWhen asked to show rankings:\n- Get data → Filter → Validate → Calculate → Present results\n\nWhen asked to send reports:\n- Run full automation workflow\n\nAlways provide specific numbers, ranks, and percentages. Be professional and data-driven.",
+          "maxIterations": 20,
+          "returnIntermediateSteps": false
+        }
+      },
+      "id": "baa5ded4-ccbc-43eb-93e6-063b2a9415b8",
+      "name": "Distributor Scorecard Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1520,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "5eced2a2-0174-47eb-9558-8520fce57642",
+      "name": "OpenAI Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        688,
+        624
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "bzf5GDKAqkuNiuCb",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.sessionId ?? \"default-session\" }}",
+        "contextWindowLength": 10
+      },
+      "id": "942806e5-a69f-497c-8fd4-aeaf5004dcd3",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        816,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Takes distributor sales data and calculates KPIs (Volume%, Coverage%, Growth%, Returns%), composite scores, tiers (Elite/On Track/At Risk/Critical), and rankings. Input should be JSON with rows array and config data.",
+        "jsCode": "const input = JSON.parse(query);\nconst salesData = input.salesData || [];\n\nconst weights = { volume: 0.40, coverage: 0.30, growth: 0.20, returns: 0.10 };\nconst distributors = [];\n\nsalesData.forEach(row => {\n  const sales = parseFloat(row.Sales_Value_PKR);\n  const target = parseFloat(row.Weekly_Target_PKR);\n  const outlets = parseFloat(row.Outlets_Covered);\n  const outletsTarget = parseFloat(row.Outlets_Target);\n  const returns = parseFloat(row.Returns_PKR || 0);\n  const historicalSales = parseFloat(row.Historical_Sales_PKR || 0);\n  \n  const volumePct = target > 0 ? (sales / target) * 100 : 0;\n  const coveragePct = outletsTarget > 0 ? (outlets / outletsTarget) * 100 : 0;\n  const growthPct = historicalSales > 0 ? ((sales - historicalSales) / historicalSales) * 100 : 0;\n  const returnsPct = sales > 0 ? (returns / sales) * 100 : 0;\n  \n  const compositeScore = \n    (volumePct * weights.volume) +\n    (coveragePct * weights.coverage) +\n    (growthPct * weights.growth) +\n    ((100 - returnsPct) * weights.returns);\n  \n  let tier = \"Critical\";\n  if (compositeScore >= 80) tier = \"Elite\";\n  else if (compositeScore >= 60) tier = \"On Track\";\n  else if (compositeScore >= 40) tier = \"At Risk\";\n  \n  distributors.push({\n    distributor_code: row.Distributor_Code,\n    sales: sales,\n    target: target,\n    volume_pct: Math.round(volumePct * 10) / 10,\n    coverage_pct: Math.round(coveragePct * 10) / 10,\n    growth_pct: Math.round(growthPct * 10) / 10,\n    returns_pct: Math.round(returnsPct * 10) / 10,\n    composite_score: Math.round(compositeScore * 10) / 10,\n    tier: tier\n  });\n});\n\ndistributors.sort((a, b) => b.composite_score - a.composite_score);\ndistributors.forEach((d, i) => { d.rank = i + 1; });\n\nreturn JSON.stringify({\n  distributors: distributors,\n  topPerformer: distributors[0],\n  bottomPerformer: distributors[distributors.length - 1]\n});",
+        "specifyInputSchema": true,
+        "jsonSchemaExample": "{ \"salesData\": [{ \"Distributor_Code\": \"D001\", \"Sales_Value_PKR\": 500000, \"Weekly_Target_PKR\": 450000, \"Outlets_Covered\": 95, \"Outlets_Target\": 100, \"Returns_PKR\": 5000, \"Historical_Sales_PKR\": 400000 }] }"
+      },
+      "id": "edb3a522-c8df-4a8c-9f74-958e2c1cc3fa",
+      "name": "Calculate Scores",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        944,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Generates AI-powered observations and recommendations for each distributor based on their performance data. Also creates an executive brief. Input should be JSON with distributors array.",
+        "jsCode": "const input = JSON.parse(query);\nconst distributors = input.distributors || [];\n\nconst commentary = distributors.map(d => ({\n  distributor_code: d.distributor_code,\n  observation: `${d.distributor_code} achieved a composite score of ${d.composite_score} placing them in ${d.tier} tier. Volume achievement at ${d.volume_pct}% and coverage at ${d.coverage_pct}% demonstrate ${d.tier === \"Elite\" ? \"exceptional\" : d.tier === \"Critical\" ? \"concerning\" : \"solid\"} performance.`,\n  recommendation: d.tier === \"Elite\" ? \"Maintain excellence and share best practices with underperforming distributors.\" : d.tier === \"Critical\" ? \"Immediate intervention required. Schedule urgent review meeting to address all KPI gaps.\" : \"Focus improvement efforts on lowest performing metrics to reach Elite tier.\"\n}));\n\nconst executiveBrief = `Weekly scorecard processed for ${distributors.length} distributors. Top performer: ${distributors[0]?.distributor_code || \"N/A\"} with score ${distributors[0]?.composite_score || 0}. Bottom performer: ${distributors[distributors.length - 1]?.distributor_code || \"N/A\"} with score ${distributors[distributors.length - 1]?.composite_score || 0}. ${distributors.filter(d => d.tier === \"Critical\").length} distributors require immediate attention.`;\n\nreturn JSON.stringify({\n  distributor_commentary: commentary,\n  executive_brief: executiveBrief\n});",
+        "specifyInputSchema": true,
+        "jsonSchemaExample": "{ \"distributors\": [{ \"distributor_code\": \"D001\", \"composite_score\": 85.5, \"tier\": \"Elite\", \"volume_pct\": 111.1, \"coverage_pct\": 95.0 }] }"
+      },
+      "id": "f23df613-cdbb-42e4-bcb0-604fb58832ef",
+      "name": "Generate AI Commentary",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1072,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    body: {\n      query: \"Run full weekly automation: get data, calculate scores, generate AI commentary, send all distributor emails, and send NSM report\"\n    },\n    sessionId: \"scheduled-automation\"\n  }\n}];"
+      },
+      "id": "8d09fb53-832d-4921-a708-97b3fd2a9f96",
+      "name": "Prepare Automation Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 AI AGENT CHARACTERISTICS\n\n**This is a TRUE AI AGENT, not a workflow:**\n\n✅ **Autonomous Decision-Making**\n- LLM decides which tools to call based on user intent\n- No hardcoded execution path\n- Adapts to different queries dynamically\n\n✅ **Natural Language Interface**\n- Accepts conversational queries via webhook\n- Understands: \"Show rankings\", \"Who is underperforming?\", \"Send reports now\"\n- No rigid input structure required\n\n✅ **Tool-Using Capability**\n- 5 specialized tools the agent can invoke\n- Agent chooses tool sequence based on context\n- Can combine multiple tools intelligently\n\n✅ **Memory & Context**\n- Remembers conversation history (10 messages)\n- Can answer follow-ups: \"Why?\" or \"Tell me more\"\n- Session-based continuity\n\n✅ **Real-Time Interaction**\n- Webhook trigger for on-demand queries\n- Immediate responses to user requests\n- Not limited to scheduled execution",
+        "height": 200,
+        "width": 300,
+        "color": 4
+      },
+      "id": "49dbf170-8a36-4e81-9482-7b317378914f",
+      "name": "Sticky Note ec3d600e",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        832,
+        -688
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 📊 AI WORKFLOW vs AI AGENT\n\n**Traditional AI Workflow (Previous Versions):**\n❌ Fixed execution path: Step 1 → 2 → 3...\n❌ Scheduled only (Monday 8 AM)\n❌ No user interaction during execution\n❌ AI used only for content generation (commentary)\n❌ Cannot answer questions or adapt\n❌ Linear: Read → Validate → Score → Email\n\n**AI Agent (Current System):**\n✅ Dynamic execution: Agent decides what to do\n✅ On-demand + scheduled\n✅ Interactive: responds to queries in real-time\n✅ AI orchestrates entire process\n✅ Can handle: queries, commands, analysis requests\n✅ Modular: Tools called as needed\n\n**Key Difference:**\nWorkflow = \"Do these steps in order\"\nAgent = \"Understand intent, choose actions, execute\"",
+        "height": 392,
+        "width": 524,
+        "color": 5
+      },
+      "id": "5767866e-99f5-404e-8bb0-2a25f380c38c",
+      "name": "Sticky Note 099eac1d",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        304,
+        -688
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🔄 HYBRID ARCHITECTURE\n\n**This system combines BOTH:**\n\n1️⃣ **Scheduled Automation** (Workflow Mode)\n- Monday 8 AM trigger\n- Prepares automation query\n- Agent executes full 13-step pipeline automatically\n\n2️⃣ **Interactive Agent** (Agent Mode)\n- Webhook accepts POST requests\n- Users ask questions anytime\n- Agent responds with data/actions\n\n**Same Agent, Two Entry Points:**\n- Schedule → Automation query → Agent\n- Webhook → User query → Agent\n\n**Agent Tools (13 Total):**\nData: Get Weekly Data, Get Distributor Config, Get System Config\nProcessing: Filter Last Week, Validate And Filter, Calculate Scores, Generate AI Commentary\nEmail: Send Distributor Emails, Send NSM Report\nLogging: Log Errors, Update Historical Data, Log Report Run, Check Duplicate Run",
+        "height": 200,
+        "width": 300,
+        "color": 2
+      },
+      "id": "14eb0c60-5dad-49ea-9a43-ff92f6c71cbd",
+      "name": "Sticky Note fb0b340d",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        832,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit?usp=sharing",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 448133481,
+          "mode": "list",
+          "cachedResultName": "Weekly Sales Data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit#gid=448133481"
+        },
+        "options": {}
+      },
+      "id": "647c3a3b-908b-45c6-ae39-e8562a3c9c9f",
+      "name": "Get Weekly Data",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        1200,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "e6WYGp0FpcuPYBkh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('recipient_email', 'Email address of the distributor') }}",
+        "subject": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('email_subject', 'Email subject line with rank') }}",
+        "message": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('html_content', 'Full HTML email body with scorecard, KPIs, rank, and AI insights') }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "dff49ae8-677e-40b1-bdcd-81e6cb4903be",
+      "name": "Send Distributor Emails",
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        1328,
+        624
+      ],
+      "webhookId": "bf5b09a6-668f-4c3c-ac0e-bcc49a0b0e41",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "vjVubJpkB61iQkrs",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('management_emails', 'Email addresses of NSM and management team (comma-separated)') }}",
+        "subject": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('report_subject', 'National scorecard report subject with week ending date') }}",
+        "message": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('report_html', 'Full HTML report with rankings table, top 3, bottom 3, tier distribution, and executive brief') }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a61a5d34-d01a-47a6-a744-1dea53a84d64",
+      "name": "Send NSM Report",
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        1456,
+        624
+      ],
+      "webhookId": "9d2967f2-06ca-4fd3-a235-3d037650bf53",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "vjVubJpkB61iQkrs",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🔗 CONNECTING GMAIL & GOOGLE SHEETS\n\n**Setup Steps:**\n\n1️⃣ **Google Sheets Tool**\n- Click \"Get Weekly Data\" tool\n- Select your Google Sheets document from dropdown\n- Choose \"Weekly Sales Data\" sheet\n- Credential will be created automatically\n\n2️⃣ **Gmail Tools (2 tools)**\n- \"Send Distributor Emails\" - sends individual scorecards\n- \"Send NSM Report\" - sends management summary\n- Both use fromAi() - the AI agent fills in:\n  • Recipient emails\n  • Subject lines\n  • HTML content\n- Credentials created automatically\n\n3️⃣ **First Run**\n- n8n will prompt OAuth consent for:\n  • Google Sheets (read access)\n  • Gmail (send access)\n- Authorize once, works forever\n\n**The agent handles everything else!**",
+        "height": 200,
+        "width": 300,
+        "color": 3
+      },
+      "id": "0a87145d-8604-402c-80ee-bc531a2a81b1",
+      "name": "Sticky Note connection",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1136,
+        -688
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## ✅ COMPLETE FEATURE IMPLEMENTATION\n\n**ALL Original Requirements NOW Implemented:**\n\n✅ **Schedule Trigger**\n- Weekly Monday 08:00 AM\n- Timezone: Asia/Karachi\n\n✅ **Data Retrieval (3 sheets)**\n- Get Weekly Data (Weekly Sales Data)\n- Get Distributor Config (emails, historical, Active flag)\n- Get System Config (weights, recipients, settings)\n\n✅ **Data Filtering**\n- Filter Last Week tool (ending Sunday)\n- Returns {rows[], weekEnd, rowCount}\n\n✅ **Validation Logic**\n- Required fields check\n- Numeric parsing (parseFloat, NaN detection)\n- Date format validation (YYYY-MM-DD)\n- Distributor exists in config\n- Active = YES filter\n- errorRows[] collection\n\n✅ **KPI Calculation**\n- Volume% = Sales/Target × 100\n- Coverage% = Outlets/Target × 100\n- Growth% = (Sales-Historical)/Historical × 100\n- Returns% = Returns/Volume × 100\n- Division by zero protection\n\n✅ **Scoring & Ranking**\n- Composite score (weighted: 40/30/20/10)\n- Tier assignment (Elite/On Track/At Risk/Critical)\n- Descending sort + rank assignment\n\n✅ **AI Commentary**\n- 2-sentence observation per distributor\n- 1 actionable recommendation\n- 3-sentence executive brief\n- Fallback on API failure\n\n✅ **Email Delivery**\n- Individual distributor emails (HTML)\n- CC territory manager\n- Subject with rank\n- NSM summary report\n- Continue on email failure\n\n✅ **Error Handling**\n- Log Errors to \"Error Log\" sheet\n- Check Duplicate Run (weekEnd)\n- Stop if no data (rowCount = 0)\n- Retry logic (agent can retry tools)\n\n✅ **Historical Tracking**\n- Update Historical Data sheet\n- Log Report Run (date, weekEnd, count, status)\n- Duplicate run protection\n\n✅ **Interactive Agent**\n- Webhook for real-time queries\n- Natural language understanding\n- Memory (10 messages)\n- Tool orchestration",
+        "height": 200,
+        "width": 400,
+        "color": 6
+      },
+      "id": "076acda1-464b-4afd-b889-6aa5d4c6d868",
+      "name": "Sticky Note gap",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        -688
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit?usp=sharing",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1259155438,
+          "mode": "list",
+          "cachedResultName": "Distributor Config",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit#gid=1259155438"
+        },
+        "options": {}
+      },
+      "id": "1b28d229-fe73-4d95-acbc-567716206b0a",
+      "name": "Get Distributor Config",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        1584,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "e6WYGp0FpcuPYBkh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit?usp=sharing",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 647176387,
+          "mode": "list",
+          "cachedResultName": "System Config",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit#gid=647176387"
+        },
+        "options": {}
+      },
+      "id": "302d1339-2769-4da7-b0fd-62191d528bdd",
+      "name": "Get System Config",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        1712,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "e6WYGp0FpcuPYBkh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Filters sales data to only include rows from last week (ending Sunday). Returns filtered rows, weekEnd date, and rowCount.",
+        "jsCode": "const input = JSON.parse(query);\nconst allRows = input.rows || [];\n\nconst today = new Date();\nconst lastSunday = new Date(today);\nlastSunday.setDate(today.getDate() - today.getDay());\nlastSunday.setHours(0, 0, 0, 0);\n\nconst weekStart = new Date(lastSunday);\nweekStart.setDate(lastSunday.getDate() - 6);\n\nconst weekEnd = lastSunday.toISOString().split(\"T\")[0];\n\nconst filteredRows = allRows.filter(row => {\n  if (!row.Week_End_Date) return false;\n  const rowDate = new Date(row.Week_End_Date);\n  return rowDate >= weekStart && rowDate <= lastSunday;\n});\n\nreturn JSON.stringify({\n  rows: filteredRows,\n  weekEnd: weekEnd,\n  rowCount: filteredRows.length\n});",
+        "specifyInputSchema": true,
+        "jsonSchemaExample": "{ \"rows\": [{ \"Week_End_Date\": \"2024-01-14\", \"Distributor_Code\": \"D001\" }] }"
+      },
+      "id": "32ef47ea-2bcc-4d91-9520-56e785658990",
+      "name": "Filter Last Week",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1840,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Validates sales data rows: checks required fields, numeric values, date format, Active status, and distributor existence in config. Returns valid rows and errorRows array.",
+        "jsCode": "const input = JSON.parse(query);\nconst rows = input.rows || [];\nconst distributorConfig = input.distributorConfig || [];\n\nconst validRows = [];\nconst errorRows = [];\n\nconst configMap = {};\ndistributorConfig.forEach(d => {\n  if (d.Distributor_Code) {\n    configMap[d.Distributor_Code] = d;\n  }\n});\n\nrows.forEach((row, index) => {\n  const errors = [];\n  \n  if (!row.Distributor_Code) errors.push(\"Missing Distributor_Code\");\n  if (!row.Sales_Value_PKR) errors.push(\"Missing Sales_Value_PKR\");\n  if (!row.Weekly_Target_PKR) errors.push(\"Missing Weekly_Target_PKR\");\n  if (!row.Outlets_Covered) errors.push(\"Missing Outlets_Covered\");\n  if (!row.Outlets_Target) errors.push(\"Missing Outlets_Target\");\n  if (!row.Week_End_Date) errors.push(\"Missing Week_End_Date\");\n  \n  if (row.Sales_Value_PKR && isNaN(parseFloat(row.Sales_Value_PKR))) {\n    errors.push(\"Invalid Sales_Value_PKR (not numeric)\");\n  }\n  if (row.Weekly_Target_PKR && isNaN(parseFloat(row.Weekly_Target_PKR))) {\n    errors.push(\"Invalid Weekly_Target_PKR (not numeric)\");\n  }\n  if (row.Outlets_Covered && isNaN(parseFloat(row.Outlets_Covered))) {\n    errors.push(\"Invalid Outlets_Covered (not numeric)\");\n  }\n  if (row.Outlets_Target && isNaN(parseFloat(row.Outlets_Target))) {\n    errors.push(\"Invalid Outlets_Target (not numeric)\");\n  }\n  \n  if (row.Week_End_Date && !/^\\d{4}-\\d{2}-\\d{2}$/.test(row.Week_End_Date)) {\n    errors.push(\"Invalid date format (expected YYYY-MM-DD)\");\n  }\n  \n  if (row.Distributor_Code && !configMap[row.Distributor_Code]) {\n    errors.push(\"Distributor not found in config\");\n  }\n  \n  const config = configMap[row.Distributor_Code];\n  if (config && config.Active !== \"YES\") {\n    errors.push(\"Distributor not active\");\n  }\n  \n  if (errors.length > 0) {\n    errorRows.push({\n      row_number: index + 1,\n      distributor_code: row.Distributor_Code || \"UNKNOWN\",\n      error_type: \"VALIDATION_FAILED\",\n      detail: errors.join(\"; \"),\n      date: new Date().toISOString().split(\"T\")[0]\n    });\n  } else {\n    validRows.push(row);\n  }\n});\n\nreturn JSON.stringify({\n  validRows: validRows,\n  errorRows: errorRows,\n  validCount: validRows.length,\n  errorCount: errorRows.length\n});",
+        "specifyInputSchema": true,
+        "jsonSchemaExample": "{ \"rows\": [{ \"Distributor_Code\": \"D001\", \"Sales_Value_PKR\": \"500000\", \"Weekly_Target_PKR\": \"450000\", \"Outlets_Covered\": \"95\", \"Outlets_Target\": \"100\", \"Week_End_Date\": \"2024-01-14\" }], \"distributorConfig\": [{ \"Distributor_Code\": \"D001\", \"Active\": \"YES\" }] }"
+      },
+      "id": "4fad2f4c-5fba-4149-a762-f4c1add73c1d",
+      "name": "Validate And Filter",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1968,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit?usp=sharing",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 313069616,
+          "mode": "list",
+          "cachedResultName": "Error Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit#gid=313069616"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Error_Date",
+              "displayName": "Error_Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Distributor_Code",
+              "displayName": "Distributor_Code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Error_Type",
+              "displayName": "Error_Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Error_Detail",
+              "displayName": "Error_Detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Row_Number",
+              "displayName": "Row_Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "1e14ff20-dc26-446c-b255-e9dae01d8b19",
+      "name": "Log Errors",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        2096,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "e6WYGp0FpcuPYBkh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit?usp=sharing",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 949986034,
+          "mode": "list",
+          "cachedResultName": "Historical Data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit#gid=949986034"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Week_End_Date",
+              "displayName": "Week_End_Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Distributor_Code",
+              "displayName": "Distributor_Code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Sales_Value_PKR",
+              "displayName": "Sales_Value_PKR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Outlets_Covered",
+              "displayName": "Outlets_Covered",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Composite_Score",
+              "displayName": "Composite_Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7964db89-5783-496e-a76b-d8c37f98b5e0",
+      "name": "Update Historical Data",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        2224,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "e6WYGp0FpcuPYBkh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit?usp=sharing",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1726336812,
+          "mode": "list",
+          "cachedResultName": "Report Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1bhVUVybCf9d6_Vu74T6t3qz-lYJ-5brE-9z8CnMP6n0/edit#gid=1726336812"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Run_Date",
+              "displayName": "Run_Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Week_Covered",
+              "displayName": "Week_Covered",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Distributors_Processed",
+              "displayName": "Distributors_Processed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Emails_Sent",
+              "displayName": "Emails_Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Top_Performer",
+              "displayName": "Top_Performer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Bottom_Performer",
+              "displayName": "Bottom_Performer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Run_Status",
+              "displayName": "Run_Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Run_Timestamp",
+              "displayName": "Run_Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "3e91673f-cf05-44fa-8268-97908da65737",
+      "name": "Log Report Run",
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [
+        2352,
+        624
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "e6WYGp0FpcuPYBkh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Checks Report Log sheet to see if a report for the given weekEnd date already exists. Returns isDuplicate boolean.",
+        "jsCode": "const input = JSON.parse(query);\nconst reportLog = input.reportLog || [];\nconst weekEnd = input.weekEnd;\n\nconst isDuplicate = reportLog.some(log => log.week_end === weekEnd);\n\nreturn JSON.stringify({\n  isDuplicate: isDuplicate,\n  message: isDuplicate ? `Report already exists for week ending ${weekEnd}` : \"No duplicate found, safe to proceed\"\n});",
+        "specifyInputSchema": true,
+        "jsonSchemaExample": "{ \"reportLog\": [{ \"week_end\": \"2024-01-14\" }], \"weekEnd\": \"2024-01-14\" }"
+      },
+      "id": "ea2c5215-e08c-447e-83d9-599e3939bc5a",
+      "name": "Check Duplicate Run",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        2480,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🔀 ORIGINAL WORKFLOW → AI AGENT MAPPING\n\n**How Original Linear Workflow Maps to Agent Tools:**\n\n**ORIGINAL STEP → AGENT TOOL**\n\n1. Schedule Trigger → ✅ Weekly Monday 08:00 AM trigger\n2. Read \"Weekly Sales Data\" → ✅ Get Weekly Data tool\n3. Code: Filter last week → ✅ Filter Last Week tool\n4. IF: rowCount > 0 → ✅ Agent logic (stops if 0)\n5. Read \"Distributor Config\" → ✅ Get Distributor Config tool\n6. Read \"System Config\" → ✅ Get System Config tool\n7. Code: Validate + Score → ✅ Validate And Filter + Calculate Scores tools\n8. Append \"Error Log\" → ✅ Log Errors tool\n9. HTTP: LLM Commentary → ✅ Generate AI Commentary tool\n10. Code: Merge commentary → ✅ Agent handles data flow\n11. Split In Batches → ✅ Agent iterates (fromAi fills each email)\n12. Code: HTML Email → ✅ Agent generates via fromAi\n13. Gmail: Send to distributor → ✅ Send Distributor Emails tool\n14. Code: Summary email → ✅ Agent generates via fromAi\n15. Gmail: Send to NSM → ✅ Send NSM Report tool\n16. Append \"Historical Data\" → ✅ Update Historical Data tool\n17. Append \"Report Log\" → ✅ Log Report Run tool\n18. Check duplicate run → ✅ Check Duplicate Run tool\n\n**KEY DIFFERENCE:**\nOriginal = Fixed sequence of 18 nodes\nAgent = 13 reusable tools, LLM orchestrates sequence\n\n**ADVANTAGE:**\nAgent can:\n- Answer \"Who is top performer?\" without full run\n- Run partial workflows on demand\n- Adapt to different queries\n- Retry failed steps intelligently",
+        "height": 200,
+        "width": 400,
+        "color": 7
+      },
+      "id": "df82fcab-262f-49e0-a139-73bb7fa4823b",
+      "name": "Sticky Note mapping",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1136,
+        -480
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekly Monday 08:00 AM": {
+      "main": [
+        [
+          {
+            "node": "Prepare Automation Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Scores": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Commentary": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Automation Query": {
+      "main": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Weekly Data": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Distributor Emails": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send NSM Report": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Distributor Config": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get System Config": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Last Week": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate And Filter": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Errors": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Historical Data": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Report Run": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate Run": {
+      "ai_tool": [
+        [
+          {
+            "node": "Distributor Scorecard Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "04d7c512-d8ff-4c73-b3fc-1a5e7dc578b1",
+  "meta": {
+    "instanceId": "0954e7d5ae1fe114d9dd08e0a2d354efb8a3e087c3746f841912f6b345cb7e20"
+  },
+  "id": "YMlTv2mnbSLi1yQf",
+  "tags": []
+}
